@@ -1,0 +1,36 @@
+# frozen_string_literal: true
+
+TraceAnalyst.configure do |c|
+  c.subject_key = :{{SUBJECT_KEY}}
+
+  # Redis connection used by Stream + optional Redis TTL activation.
+  c.redis = proc { |&blk| Sidekiq.redis(&blk) }
+
+  c.s3_prefix = '{{BRANCH_PREFIX}}'
+  c.branch_prefix = '{{BRANCH_PREFIX}}'
+  c.investigations_dir = '{{INVESTIGATIONS_DIR}}'
+  c.local_drop_dir = '{{LOCAL_DROP_DIR}}'
+
+  bucket = ENV['TRACE_ANALYST_S3_BUCKET'].presence ||
+           Rails.application.credentials.dig(:aws, :trace_analyst_bucket_name)
+  region = ENV['AWS_REGION'].presence ||
+           Rails.application.credentials.dig(:aws, :region)
+
+  raise 'Configure TRACE_ANALYST_S3_BUCKET or credentials aws.trace_analyst_bucket_name' if bucket.blank?
+
+  creds = Aws::Credentials.new(
+    Rails.application.credentials.dig(:aws, :access_key_id),
+    Rails.application.credentials.dig(:aws, :secret_access_key)
+  )
+
+  c.storage = TraceAnalyst::Storage::S3Adapter.new(
+    bucket: bucket,
+    region: region || 'us-east-1',
+    credentials: creds
+  )
+
+  # Default: Redis TTL safety net (auto-expires). Replace with Activation::Callable for feature flags.
+  c.activation = TraceAnalyst::Activation::RedisTtl.new(ttl: 86_400)
+end
+
+TraceAnalyst::FlushJob.queue_as :low
